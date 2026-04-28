@@ -2,7 +2,7 @@
 import json
 import os
 from typing import Any
-
+import re
 from langchain.tools import tool
 import openai
 from langchain_openai import ChatOpenAI
@@ -45,6 +45,64 @@ def predict_price(car_info: dict) -> float:
     return price
 
 
+
+def extract_json_from_text(text: str) -> dict:
+    """
+    Достаёт JSON из ответа LLM.
+    Даже если модель случайно добавила текст вокруг JSON.
+    """
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"LLM did not return JSON: {text}")
+
+    return json.loads(match.group(0))
+
+def extract_car_info(user_text: str) -> dict:
+    system_prompt = """
+    Ты превращаешь текст пользователя в JSON с характеристиками автомобиля.
+
+    Верни ТОЛЬКО JSON. Без markdown, без объяснений.
+
+    Поля:
+    brand, model, year, mileage_km, engine_volume_l, fuel_type,
+    transmission, drive_type, steering_wheel, color, generation.
+
+    Правила:
+    - Если бренд написан по-русски, переведи в английское название: Тойота -> Toyota, БМВ -> BMW.
+    - Если модель Камри -> Camry.
+    - fuel_type используй: бензин, дизель, гибрид, электро, газ.
+    - transmission используй: Автомат, Механика, Вариатор, Робот.
+    - drive_type используй: Передний привод, Задний привод, Полный привод.
+    - steering_wheel используй: Слева или Справа.
+    - Если поле неизвестно, ставь null.
+    - generation если неизвестно, ставь "unknown".
+
+    Пример:
+    {
+    "brand": "Toyota",
+    "model": "Camry",
+    "year": 2021,
+    "mileage_km": 80000,
+    "engine_volume_l": 2.5,
+    "fuel_type": "бензин",
+    "transmission": "Автомат",
+    "drive_type": "Передний привод",
+    "steering_wheel": "Слева",
+    "color": "Серый",
+    "generation": "XV70"
+    }
+    """
+
+    response = llm.invoke([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_text}
+    ])
+
+    content = response.content
+    car_info = extract_json_from_text(content)
+
+    return car_info
+
 @tool
 def ML_predict(car_info_json: str) -> str:
     """
@@ -75,7 +133,7 @@ llm = ChatOpenAI(
 
 agent = create_agent(
     model=llm,
-    tools=[ML_predict],
+    tools=[ML_predict ],
     system_prompt="Ты авто-ассистент. Если нужно предсказать цену машины, используй ML_predict.Но сам не придумывай цену, а всегда вызывай ML_predict с правильными характеристиками машины. Если не хватает данных, попроси их у пользователя."
 )
 if __name__ == "__main__":
@@ -83,17 +141,18 @@ if __name__ == "__main__":
     car_info = {
         "brand": "Toyota",
         "model": "Camry",
-        "year": 2017,
-        "mileage_km": 150000,
+        "year": 2022,
+        "mileage_km": 55900,
         "engine_volume_l": 2.5,
         "fuel_type": "бензин",
         "transmission": "автомат",
         "drive_type": "Передний привод",
         "steering_wheel": "Слева",
-        "color": "Серый"
+        "color": "черный",
+        "generation": "V75"
     }
     response = agent.invoke(
-        {"messages":[{'role':'user','content':f"Сколько стоит машина с такими характеристиками? {json.dumps(car_info)}"}]}
+        {'messages':[{'role':'user','content':"Камри 2022 года, 55900 км, 2.5 литра, бензин, автомат, передний привод, руль слева, черная, поколение V75. выведи json?"}]}
+       # {"messages":[{'role':'user','content':f"Сколько стоит машина с такими характеристиками? {json.dumps(car_info)}"}]}
     )
-    print(predict_price(car_info))
     print(response["messages"][-1].content)
